@@ -18,62 +18,47 @@ class Dashboard(c.Module):
         self.load_state(update=False)
 
 
-    def sidebar(self):
-        with st.sidebar:
+    def sidebar(self, sidebar:bool = True):
 
-            if not c.server_exists('module'):
-                    c.serve(wait_for_server=True)
-            self.network_dashboard(sidebar=False)
-            self.servers = c.servers(network=self.network)
-            self.module_name = st.selectbox('Select Server', self.servers, 0)
+        if sidebar:
+            with st.sidebar:
+                return self.sidebar(sidebar=False)
 
-    
-
-            self.module = c.connect(self.module_name, network=self.network)
-
-            module_info_path = f'module_info/{self.module_name}'
-
-            module_info = self.get(module_info_path, default={})
-            
-            if module_info == {}:
-                try:
-                    module_info = self.module.info(schema=True)
-                except Exception as e:
-                    st.error(f'Module Not Found -> {self.module_name} {e}')
-                    return
-            self.module_info = module_info
-            self.module_schema = self.module_info['schema']
-            self.put(module_info_path, self.module_info)
-
-            self.module_functions = self.module_info['functions']
-            self.module_address = self.module_info['address']
+        st.title(f'COMMUNE')
 
 
+        self.select_key()
+        self.select_network()
 
-            self.fn = st.selectbox('Select Function', self.module_functions, 0)
 
-            self.fn_path = f'{self.module_name}/{self.fn}'
-            st.write(f'**address** {self.module_address}')
-            with st.expander(f'{self.fn_path} playground', expanded=True):
+    def select_network(self, network=None):
+        if network == None:
+            network = self.network
+        if not c.server_exists('module'):
+                c.serve(wait_for_server=True)
 
-                kwargs = self.function2streamlit(fn=self.fn, fn_schema=self.module_schema[self.fn], salt='sidebar')
-                cols = st.columns([1,1])
-                timeout = cols[0].number_input('Timeout', 1, 100, 10, 1, key=f'timeout.{self.fn_path}')
-                call = st.button(f'Call {self.fn_path}')
-                if call:
-                    try:
-                        response = getattr(self.module, self.fn)(**kwargs, timeout=timeout)
-                    except Exception as e:
-                        e = c.detailed_error(e)
-                        response = {'success': False, 'message': e}
-                    st.write(response)
+        self.networks = c.networks()
+        network2index = {n:i for i,n in enumerate(self.networks)}
+        index = network2index['local']
+        self.network = st.selectbox('Select a Network', self.networks, index=index, key='network.sidebar')
+        namespace = c.namespace(network=self.network)
+        with st.expander('Namespace', expanded=True):
+            search = st.text_input('Search Namespace', '', key='search.namespace')
+            df = pd.DataFrame(namespace.items(), columns=['key', 'value'])
+            if search != '':
+                df = df[df['key'].str.contains(search)]
+            st.write(f'**{len(df)}** servers with **{search}** in it')
 
-            self.key = c.module('key.dashboard').dashboard(state=self.state)
-    
-            sync = st.button(f'Sync {self.network} Network'.upper(), key='sync.network')
-            if sync:
-                c.update_network(self.network)
-                c.sync()
+            df.set_index('key', inplace=True)
+            st.dataframe(df, width=1000)
+        sync = st.button(f'Sync {self.network} Network'.upper(), key='sync.network')
+        self.servers = c.servers(network=self.network)
+        if sync:
+            c.sync()
+
+
+
+
 
 
 
@@ -110,39 +95,71 @@ class Dashboard(c.Module):
         import streamlit as st
         # plotly
         self = cls()
-        st.title(f'COMMUNE')
         self.sidebar()
+
+
+    def select_key(self):
+        keys = c.keys()
+        key2index = {k:i for i,k in enumerate(keys)}
+        self.key = st.selectbox('Select Key', keys, key2index['module'], key='key.sidebar')
+        key_address = self.key.ss58_address
+        st.write(f'**address** {self.key.__dict__}')
+        st.write('\n\n\n'*2)
+        st.code(key_address)
+        return self.key
+
+    @classmethod
+    def dashboard(cls):
+        self = cls()
+        self.sidebar()
+
+
+
+
         
-        tabs = st.tabs(['CHAT', 'MODULES', 'SUBSPACE']) 
+        tabs = st.tabs(['SERVE', 'WALLET', 'PLAYGROUND']) 
         chat = False
-        with tabs[0]:
-            chat = True
-        with tabs[1]: 
+        with tabs[0]: 
             self.modules_dashboard()  
-        with tabs[2]:
+        with tabs[1]:
             self.subspace_dashboard()
+        with tabs[2]:
+            self.playground_dashboard()
         if chat:
             self.chat_dashboard()
 
     def playground_dashboard(self):
-        info = self.module_info
-        network = self.network
-        module_address = self.module_address
-        st.write('Name: ', info['name'])
-        schema = info['schema']
-        buttons = {}
-        for fn, fn_schema in schema.items():
-            with st.expander(fn, expanded=False):
-                with st.form(key=f'{fn}.form'):
-                    kwargs = self.function2streamlit(fn=fn, fn_schema=fn_schema)
-                    buttons[fn] = st.form_submit_button(fn)
-                    if buttons[fn]:
-                        kwargs['network'] = network
 
-                        result = c.submit(c.call, args=[module_address, fn], timeout=10, kwargs=kwargs, return_future=False)[0]
-                        st.write('Result', result)
+        server2index = {s:i for i,s in enumerate(self.servers)}
+        default_servers = [self.servers[0]]
+        cols = st.columns([1,1])
+        self.server_name = cols[0].selectbox('Select Server',self.servers, 0, key=f'serve.module.playground')
+        self.server = c.connect(self.server_name, network=self.network)
+        self.server_info = self.server.info(schema=True, timeout=2)
+        self.server_schema = self.server_info['schema']
+        self.server_functions = list(self.server_schema.keys())
+        self.server_address = self.server_info['address']
 
+        self.fn = cols[1].selectbox('Select Function', self.server_functions, 0)
 
+        self.fn_path = f'{self.server_name}/{self.fn}'
+        st.write(f'**address** {self.server_address}')
+        with st.expander(f'{self.fn_path} playground', expanded=True):
+
+            kwargs = self.function2streamlit(fn=self.fn, fn_schema=self.server_schema[self.fn], salt='sidebar')
+
+            st.write(kwargs)
+            cols = st.columns([1,1])
+            timeout = cols[0].number_input('Timeout', 1, 100, 10, 1, key=f'timeout.{self.fn_path}')
+            call = st.button(f'Call {self.fn_path}')
+            if call:
+                try:
+                    response = getattr(self.server, self.fn)(**kwargs, timeout=timeout)
+                except Exception as e:
+                    e = c.detailed_error(e)
+                    response = {'success': False, 'message': e}
+                st.write(response)
+    
         
     def remote_dashboard(self):
         st.write('# Remote')
@@ -159,25 +176,25 @@ class Dashboard(c.Module):
 
         fn = self.fn
 
-        module_name = self.module_name
-        module = self.module
-        module_info = self.module_info
+        server_name = self.server_name
+        server  = self.server
+        server_info = self.server_info
         
 
-        if fn not in module_info['schema']:
-            st.error(f'{fn} not in {module_name}')
+        if fn not in server_info['schema']:
+            st.error(f'{fn} not in {server_name}')
 
             return
 
-        default_kwargs = module_info['schema'][fn]['default']
+        default_kwargs = server_info['schema'][fn]['default']
 
         with st.expander('Parameters', expanded=False):
 
             with st.form(key='chat'):
-                chat_path : str = f'chat/{module}/defaults'
+                chat_path : str = f'chat/{server}/defaults'
                 kwargs = self.get(chat_path, default={})
                 kwargs.update(default_kwargs)
-                kwargs = self.function2streamlit(fn=fn, fn_schema=module_info['schema'][fn], salt='chat')
+                kwargs = self.function2streamlit(fn=fn, fn_schema=server_info['schema'][fn], salt='chat')
                 chat_button = st.form_submit_button('set parameters')
                 if chat_button:
                     response = self.put(chat_path, kwargs)
@@ -207,11 +224,11 @@ class Dashboard(c.Module):
                 st.markdown(prompt)
 
 
-            with st.chat_message(self.module_name):
+            with st.chat_message(self.server_name):
                 kwargs = {k:v for i, (k,v) in enumerate(kwargs.items()) if i > 0}
                 if 'history' in kwargs:
                     kwargs['history'] = st.session_state.messages
-                response = getattr(module, fn)(prompt, **kwargs)
+                response = getattr(server, fn)(prompt, **kwargs)
                 if isinstance(response, dict):
                     for k in ['response', 'text', 'content', 'message']:
                         if k in response:
@@ -226,20 +243,8 @@ class Dashboard(c.Module):
 
             # Add user message to chat history
         
+
         
-    def network_dashboard(self, sidebar=True): 
-
-        if sidebar:
-            with st.sidebar:
-                self.network_dashboard(sidebar=False) 
-        n = c.module('namespace')()
-        self.networks = n.networks()
-        network2index = {n:i for i,n in enumerate(self.networks)}
-        index = network2index['local']
-
-        cols = st.columns([1,1])
-        self.network = cols[0].selectbox('Select a Network', self.networks, index=index, key='network.sidebar')
-
 
 
     def modules_dashboard(self):
@@ -248,25 +253,31 @@ class Dashboard(c.Module):
         modules = c.modules()
         self.st.line_seperator()
         module2index = {m:i for i,m in enumerate(modules)}
-        module  = st.selectbox('Select A Module', modules, module2index['agent'], key=f'serve.module')
+        module_name  = st.selectbox('Select a Module', modules, module2index['agent'], key=f'serve.module')
 
 
-        module = c.module(module)
+
+        module = c.module(module_name)
         # n = st.slider('replicas', 1, 10, 1, 1, key=f'n.{prefix}')
                     
-        with st.expander('Serve', expanded=True):
 
-            with st.form(key='serve'):
-                
+        with st.expander('serve'):
+            cols = st.columns([2,2,1])
+            tag = cols[0].text_input('tag', 'replica', key=f'serve.tag.{module}')
+            tag = None if tag == '' else tag
+
+            n = cols[1].number_input('Number of Replicas', 1, 30, 1, 1, key=f'serve.n.{module}')
+            
+            [cols[2].write('\n\n\n') for _ in range(2)]
+            register = cols[2].checkbox('Register', key=f'serve.register.{module}')
+            if register:
+                stake = cols[2].number_input('Stake', 0, 100000, 1000, 100, key=f'serve.stake.{module}')
+            st.write(f'### {module_name.upper()} kwargs')
+            with st.form(key=f'serve.{module}'):
                 kwargs = self.function2streamlit(module=module, fn='__init__' )
 
-                cols = st.columns([1,1,2])
-                tag = cols[0].text_input('tag', 'replica', key=f'serve.tag.{module}')
-                tag = None if tag == '' else tag
+                serve = st.form_submit_button('Serve')
 
-                n = cols[1].number_input('Number of Replicas', 1, 30, 1, 1, key=f'serve.n.{module}')
-
-                serve = cols[2].form_submit_button('Serve')
 
                 if serve:
 
@@ -314,7 +325,7 @@ class Dashboard(c.Module):
 
 
     def subspace_dashboard(self):
-        return c.module('subspace.dashboard').dashboard()
+        return c.module('subspace.dashboard').dashboard(key=self.key)
     
     @classmethod
     def dash(cls, *args, **kwargs):

@@ -1532,7 +1532,10 @@ class c:
     @classmethod
     def dash(cls, *args, **kwargs):
         c.print('FAM')
-        return cls.st()
+        if cls.module_path() == 'module':
+            return cls.st('dashboard')
+        else:
+            return cls.st()
     
     @classmethod
     def dashboard(cls):
@@ -2319,6 +2322,10 @@ class c:
     @classmethod
     def add_servers(cls, *args, **kwargs):
         return c.module("namespace").add_servers(*args, **kwargs)
+
+    @classmethod
+    def readd_servers(cls, *args, **kwargs):
+        return c.module("namespace").readd_servers(*args, **kwargs)
     @classmethod
     def rm_server(cls, *args, **kwargs):
         return c.module("namespace").rm_server(*args, **kwargs)
@@ -2336,6 +2343,16 @@ class c:
     @classmethod
     def rm_namespace(cls, *args, **kwargs):
         return c.module("namespace").rm_namespace(*args, **kwargs)
+
+    @classmethod
+    def empty_namespace(cls, *args, **kwargs):
+        return c.module("namespace").empty_namespace(*args, **kwargs)
+
+    @classmethod
+    def add_namespace(cls, *args, **kwargs):
+        return c.module("namespace").empty_namespace(*args, **kwargs)
+
+
     
     @classmethod
     def update_namespace(cls, network:str='local',**kwargs):
@@ -6180,9 +6197,12 @@ class c:
                         yield future.result()
         else:
             def get_results():
-                for future in concurrent.futures.as_completed(futures, timeout=timeout):
-                    idx = future2idx[future]
-                    results[idx] = future.result()
+                try:
+                    for future in concurrent.futures.as_completed(futures, timeout=timeout):
+                        idx = future2idx[future]
+                        results[idx] = future.result()
+                except Exception as e:
+                    print(e)
                 return results
             
         return get_results()
@@ -7756,9 +7776,6 @@ class c:
         c.print('hello')
 
 
-
-        
-    
     thread_map = {}
     @classmethod
     def thread(cls,fn: Union['callable', str],  
@@ -7782,16 +7799,19 @@ class c:
         
         import threading
         t = threading.Thread(target=fn, args=args, kwargs=kwargs)
-        t.__dict__['time'] = c.time()
+        
+        # set the time it starts
+        t.__dict__['start_time'] = c.time()
+        
         t.daemon = daemon
         if start:
             t.start()
         fn_name = fn.__name__
-        if tag == None:
-            tag = ''
-        else:
+        if tag != None:
             tag = str(tag)
-        name = fn_name + tag_seperator + tag
+            name = fn_name + tag_seperator + tag
+        else:
+            name = fn_name + tag_seperator
         cnt = 0
         while name in cls.thread_map:
             cnt += 1
@@ -7969,6 +7989,10 @@ class c:
             'error': '💥',
             'cross': '❌',
             'check': '✅',
+            'wrong': '❌',
+            'right': '✅',
+            'correct': '✅',
+            'incorrect': '❌',
             'checkmark': '✅',
             'check_mark': '✅',
             'checkered_flag': '🏁',
@@ -8157,14 +8181,11 @@ class c:
             state =  subspace.state_dict(update=update)
             return state
         
-        self.state = get_state() if state == None else state
+        if state == None:
+            state = get_state()
+        self.state =  state
         self.netuid = 0
         self.subnets = self.state['subnets']
-        self.subnet = 'commune'
-
-        self.subnet2info = {s['netuid']: s for s in self.subnets}
-        self.subnet2netuid = {s['name']: s['netuid'] for s in self.subnets}
-        self.subnet_names = [s['name'] for s in self.subnets]
 
         self.modules = self.state['modules'][self.netuid]
         self.name2key = {k['name']: k['key'] for k in self.modules}
@@ -8182,13 +8203,11 @@ class c:
             self.modules[i]['stake'] = self.modules[i]['stake']/1e9
             self.modules[i]['emission'] = self.modules[i]['emission']/1e9
 
-
         self.key_info = {
             'ss58_address': self.key.ss58_address,
             'balance': self.state['balances'].get(self.key.ss58_address,0),
             'stake_to': self.state['stake_to'][self.netuid].get(self.key.ss58_address,{}),
             'stake': sum([v[1] for v in self.state['stake_to'][self.netuid].get(self.key.ss58_address)]),
-            
         }
 
         self.key_info['balance']  = self.key_info['balance']/1e9
